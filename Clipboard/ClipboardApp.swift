@@ -17,6 +17,11 @@ struct ClipboardApp: App {
         }
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentSize)
+        
+        MenuBarExtra("Clipboard", systemImage: "doc.on.clipboard.fill") {
+            MenuBarView()
+        }
+        .menuBarExtraStyle(.window)
     }
 }
 

@@ -3,6 +3,8 @@ import SwiftUI
 import AppKit
 
 class ClipboardManager: ObservableObject {
+    static let shared = ClipboardManager()
+    
     @Published var history: [ClipboardItem] = []
     
     private let pasteboard = NSPasteboard.general
@@ -106,5 +108,19 @@ class ClipboardManager: ObservableObject {
         }
         // Immediately update changeCount so we don't read our own write
         lastChangeCount = pasteboard.changeCount
+    }
+    
+    func updateItemText(_ item: ClipboardItem, newText: String) {
+        DispatchQueue.main.async {
+            if let index = self.history.firstIndex(where: { $0.id == item.id }) {
+                let updated = ClipboardItem(id: item.id, type: .text, textData: newText, imageData: nil, dateCopied: item.dateCopied)
+                self.history[index] = updated
+                self.saveHistory()
+            }
+        }
+    }
+    
+    func addItem(_ item: ClipboardItem) {
+        appendItem(item)
     }
 }

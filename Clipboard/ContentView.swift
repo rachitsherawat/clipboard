@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 enum FilterType: String, CaseIterable {
     case all = "All"
@@ -15,19 +16,34 @@ enum FilterType: String, CaseIterable {
 }
 
 struct ContentView: View {
-    @StateObject private var manager = ClipboardManager()
+    @ObservedObject private var manager = ClipboardManager.shared
     @State private var filter: FilterType = .all
     @State private var previewImage: NSImage?
+    @State private var searchText: String = ""
+    @State private var editingItem: ClipboardItem?
+    @State private var isDropTargeted = false
     
     var filteredHistory: [ClipboardItem] {
+        var items = manager.history
+        
+        // Apply type filter
         switch filter {
-        case .all:
-            return manager.history
-        case .text:
-            return manager.history.filter { $0.type == .text }
-        case .image:
-            return manager.history.filter { $0.type == .image }
+        case .all: break
+        case .text: items = items.filter { $0.type == .text }
+        case .image: items = items.filter { $0.type == .image }
         }
+        
+        // Apply search filter
+        if !searchText.isEmpty {
+            items = items.filter { item in
+                if item.type == .text, let text = item.textData {
+                    return text.localizedCaseInsensitiveContains(searchText)
+                }
+                return false
+            }
+        }
+        
+        return items
     }
     
     var groupedHistory: [(Date, [ClipboardItem])] {
@@ -57,7 +73,61 @@ struct ContentView: View {
             }
             .padding(.horizontal, 24)
             .padding(.top, 24)
-            .padding(.bottom, 16)
+            .padding(.bottom, 12)
+            
+            // Search Bar
+            HStack(spacing: 10) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundColor(.secondary)
+                    .font(.system(size: 14))
+                TextField("Search clipboard items…", text: $searchText)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 14))
+                if !searchText.isEmpty {
+                    Button(action: { searchText = "" }) {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundColor(.secondary)
+                            .font(.system(size: 14))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(10)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color(nsColor: .windowBackgroundColor).opacity(0.4))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
+            )
+            .padding(.horizontal, 24)
+            .padding(.bottom, 12)
+            
+            // Drop Zone
+            if isDropTargeted {
+                VStack(spacing: 6) {
+                    Image(systemName: "plus.circle.fill")
+                        .font(.system(size: 28))
+                        .foregroundColor(.blue)
+                    Text("Drop to add")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(.secondary)
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: 80)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(Color.blue.opacity(0.5), style: StrokeStyle(lineWidth: 2, dash: [8, 4]))
+                        .background(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(Color.blue.opacity(0.05))
+                        )
+                )
+                .padding(.horizontal, 24)
+                .padding(.bottom, 8)
+                .transition(.opacity.combined(with: .scale(scale: 0.95)))
+            }
             
             // Content List
             ScrollView {
@@ -66,9 +136,9 @@ struct ContentView: View {
                         Image(systemName: "doc.on.clipboard")
                             .font(.system(size: 40))
                             .foregroundColor(.secondary.opacity(0.5))
-                        Text(filter == .all ? "Your clipboard history is empty" : "No \(filter.rawValue.lowercased())s found")
+                        Text(emptyStateMessage)
                             .font(.headline)
-                        if filter == .all {
+                        if filter == .all && searchText.isEmpty {
                             Text("Copy something to see it here")
                                 .font(.subheadline)
                                 .foregroundColor(.secondary)
@@ -85,8 +155,17 @@ struct ContentView: View {
                                         item: item,
                                         onCopy: { manager.writeToPasteboard(item: item) },
                                         onDelete: { manager.deleteItem(item) },
-                                        onPreview: { previewImage = item.imageData }
+                                        onPreview: { previewImage = item.imageData },
+                                        onEdit: { editingItem = item }
                                     )
+                                    .onDrag {
+                                        if item.type == .text, let text = item.textData {
+                                            return NSItemProvider(object: text as NSString)
+                                        } else if item.type == .image, let image = item.imageData {
+                                            return NSItemProvider(object: image)
+                                        }
+                                        return NSItemProvider()
+                                    }
                                 }
                             }
                         }
@@ -96,8 +175,12 @@ struct ContentView: View {
                 }
             }
             .scrollIndicators(.hidden)
+            .onDrop(of: [.plainText, .image, .fileURL], isTargeted: $isDropTargeted) { providers in
+                handleDrop(providers: providers)
+            }
         }
         .background(Color.clear)
+        .animation(.easeInOut(duration: 0.2), value: isDropTargeted)
         .sheet(item: Binding<PreviewIdentifier?>(
             get: { previewImage.map { PreviewIdentifier(image: $0) } },
             set: { if $0 == nil { previewImage = nil } }
@@ -122,8 +205,133 @@ struct ContentView: View {
             .frame(width: 500, height: 400)
             .background(VisualEffectView(material: .hudWindow, blendingMode: .behindWindow))
         }
+        .sheet(item: $editingItem) { item in
+            TextEditorSheet(item: item) { updatedText in
+                manager.updateItemText(item, newText: updatedText)
+            }
+        }
+    }
+    
+    private var emptyStateMessage: String {
+        if !searchText.isEmpty {
+            return "No results for \"\(searchText)\""
+        } else if filter == .all {
+            return "Your clipboard history is empty"
+        } else {
+            return "No \(filter.rawValue.lowercased())s found"
+        }
+    }
+    
+    private func handleDrop(providers: [NSItemProvider]) -> Bool {
+        var handled = false
+        
+        for provider in providers {
+            // Try plain text
+            if provider.hasItemConformingToTypeIdentifier(UTType.plainText.identifier) {
+                provider.loadItem(forTypeIdentifier: UTType.plainText.identifier, options: nil) { data, _ in
+                    if let textData = data as? Data, let text = String(data: textData, encoding: .utf8) {
+                        let item = ClipboardItem(id: UUID(), type: .text, textData: text, imageData: nil, dateCopied: Date())
+                        DispatchQueue.main.async { manager.addItem(item) }
+                    } else if let text = data as? String {
+                        let item = ClipboardItem(id: UUID(), type: .text, textData: text, imageData: nil, dateCopied: Date())
+                        DispatchQueue.main.async { manager.addItem(item) }
+                    }
+                }
+                handled = true
+            }
+            // Try image
+            else if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
+                provider.loadItem(forTypeIdentifier: UTType.image.identifier, options: nil) { data, _ in
+                    if let imageData = data as? Data, let image = NSImage(data: imageData) {
+                        let item = ClipboardItem(id: UUID(), type: .image, textData: nil, imageData: image, dateCopied: Date())
+                        DispatchQueue.main.async { manager.addItem(item) }
+                    }
+                }
+                handled = true
+            }
+            // Try file URL (for image files)
+            else if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+                provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { data, _ in
+                    if let urlData = data as? Data,
+                       let url = URL(dataRepresentation: urlData, relativeTo: nil),
+                       let image = NSImage(contentsOf: url) {
+                        let item = ClipboardItem(id: UUID(), type: .image, textData: nil, imageData: image, dateCopied: Date())
+                        DispatchQueue.main.async { manager.addItem(item) }
+                    }
+                }
+                handled = true
+            }
+        }
+        
+        return handled
     }
 }
+
+// MARK: - Text Editor Sheet
+
+struct TextEditorSheet: View {
+    let item: ClipboardItem
+    let onSave: (String) -> Void
+    
+    @State private var editedText: String = ""
+    @Environment(\.dismiss) private var dismiss
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header
+            HStack {
+                Text("Edit Clipboard Text")
+                    .font(.system(size: 16, weight: .semibold))
+                Spacer()
+                Button(action: { dismiss() }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.title2)
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(16)
+            
+            Divider().opacity(0.3)
+            
+            // Text Editor
+            TextEditor(text: $editedText)
+                .font(.system(size: 14, design: .monospaced))
+                .scrollContentBackground(.hidden)
+                .padding(12)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color(nsColor: .textBackgroundColor).opacity(0.3))
+                )
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+            
+            Divider().opacity(0.3)
+            
+            // Footer buttons
+            HStack {
+                Button("Cancel") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Spacer()
+                Button("Save") {
+                    onSave(editedText)
+                    dismiss()
+                }
+                .keyboardShortcut(.defaultAction)
+                .buttonStyle(.borderedProminent)
+                .disabled(editedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            .padding(16)
+        }
+        .frame(width: 480, height: 360)
+        .background(VisualEffectView(material: .hudWindow, blendingMode: .behindWindow))
+        .onAppear {
+            editedText = item.textData ?? ""
+        }
+    }
+}
+
+// MARK: - Supporting Views
 
 struct PreviewIdentifier: Identifiable {
     let id = UUID()
@@ -201,12 +409,14 @@ struct FilterButton: View {
     }
 }
 
-// Subview for individual cards
+// MARK: - Clipboard Item Card
+
 struct ClipboardItemView: View {
     let item: ClipboardItem
     let onCopy: () -> Void
     let onDelete: () -> Void
     let onPreview: () -> Void
+    let onEdit: () -> Void
     
     @State private var isHovered = false
     @State private var justCopied = false
@@ -246,6 +456,17 @@ struct ClipboardItemView: View {
                                 .frame(width: 24, height: 24)
                         }
                         .buttonStyle(.plain)
+                    }
+                    
+                    if item.type == .text {
+                        Button(action: onEdit) {
+                            Image(systemName: "pencil.line")
+                                .foregroundColor(.orange)
+                                .font(.system(size: 18))
+                                .frame(width: 24, height: 24)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Edit text")
                     }
                 
                     Button(action: handleCopy) {
