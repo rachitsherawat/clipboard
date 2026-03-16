@@ -12,7 +12,7 @@ struct MenuBarView: View {
     
     var body: some View {
         VStack(spacing: 0) {
-            // Header
+            // Header (fixed, outside scroll)
             HStack {
                 Image(systemName: "doc.on.clipboard.fill")
                     .foregroundStyle(
@@ -41,7 +41,7 @@ struct MenuBarView: View {
             
             Divider().opacity(0.2)
             
-            // Items list
+            // Scrollable content area (list + preview inside a single scroll)
             if recentItems.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "doc.on.clipboard")
@@ -54,8 +54,7 @@ struct MenuBarView: View {
                         .font(.system(size: 11))
                         .foregroundColor(.secondary.opacity(0.7))
                 }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 32)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
                     LazyVStack(spacing: 3) {
@@ -88,29 +87,28 @@ struct MenuBarView: View {
                                 }
                                 return NSItemProvider()
                             }
+                            
+                            // Inline preview — directly below the selected row
+                            if selectedItem?.id == item.id {
+                                MenuBarPreviewPanel(item: item) {
+                                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                        selectedItem = nil
+                                    }
+                                }
+                                .transition(.opacity)
+                                .padding(.horizontal, 2)
+                                .padding(.bottom, 4)
+                            }
                         }
                     }
                     .padding(.vertical, 4)
                     .padding(.horizontal, 6)
                 }
-                .frame(maxHeight: selectedItem != nil ? 200 : 320)
-            }
-            
-            // Inline preview panel
-            if let previewItem = selectedItem {
-                Divider().opacity(0.2)
-                
-                MenuBarPreviewPanel(item: previewItem) {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                        selectedItem = nil
-                    }
-                }
-                .transition(.move(edge: .bottom).combined(with: .opacity))
             }
             
             Divider().opacity(0.2)
             
-            // Footer
+            // Footer (fixed, outside scroll)
             HStack {
                 Button(action: openMainWindow) {
                     HStack(spacing: 6) {
@@ -135,7 +133,7 @@ struct MenuBarView: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
         }
-        .frame(width: 340)
+        .frame(width: 340, height: 460)
     }
     
     private func openMainWindow() {
