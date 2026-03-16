@@ -18,10 +18,10 @@ enum FilterType: String, CaseIterable {
 struct ContentView: View {
     @ObservedObject private var manager = ClipboardManager.shared
     @State private var filter: FilterType = .all
-    @State private var previewImage: NSImage?
     @State private var searchText: String = ""
     @State private var editingItem: ClipboardItem?
     @State private var isDropTargeted = false
+    @State private var previewingItem: ClipboardItem?
     
     var filteredHistory: [ClipboardItem] {
         var items = manager.history
@@ -155,7 +155,7 @@ struct ContentView: View {
                                         item: item,
                                         onCopy: { manager.writeToPasteboard(item: item) },
                                         onDelete: { manager.deleteItem(item) },
-                                        onPreview: { previewImage = item.imageData },
+                                        onPreview: { previewingItem = item },
                                         onEdit: { editingItem = item }
                                     )
                                     .onDrag {
@@ -181,29 +181,8 @@ struct ContentView: View {
         }
         .background(Color.clear)
         .animation(.easeInOut(duration: 0.2), value: isDropTargeted)
-        .sheet(item: Binding<PreviewIdentifier?>(
-            get: { previewImage.map { PreviewIdentifier(image: $0) } },
-            set: { if $0 == nil { previewImage = nil } }
-        )) { wrapper in
-            // Image Preview Modal
-            VStack {
-                HStack {
-                    Spacer()
-                    Button(action: { previewImage = nil }) {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.title2)
-                            .foregroundColor(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .padding([.top, .trailing], 16)
-                }
-                Image(nsImage: wrapper.image)
-                    .resizable()
-                    .scaledToFit()
-                    .padding()
-            }
-            .frame(width: 500, height: 400)
-            .background(VisualEffectView(material: .hudWindow, blendingMode: .behindWindow))
+        .sheet(item: $previewingItem) { item in
+            ClipboardPreviewSheet(item: item)
         }
         .sheet(item: $editingItem) { item in
             TextEditorSheet(item: item) { updatedText in
@@ -264,6 +243,120 @@ struct ContentView: View {
         }
         
         return handled
+    }
+}
+
+// MARK: - Unified Preview Sheet
+
+struct ClipboardPreviewSheet: View {
+    let item: ClipboardItem
+    @Environment(\.dismiss) private var dismiss
+    @State private var justCopied = false
+    @ObservedObject private var manager = ClipboardManager.shared
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header
+            HStack {
+                HStack(spacing: 8) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(item.type == .text ? Color.blue.opacity(0.15) : Color.purple.opacity(0.15))
+                            .frame(width: 28, height: 28)
+                        Image(systemName: item.type == .text ? "doc.plaintext.fill" : "photo.fill")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundColor(item.type == .text ? .blue : .purple)
+                    }
+                    Text(item.type == .text ? "Text Preview" : "Image Preview")
+                        .font(.system(size: 16, weight: .semibold))
+                }
+                
+                Spacer()
+                
+                // Copy button
+                Button(action: handleCopy) {
+                    HStack(spacing: 5) {
+                        Image(systemName: justCopied ? "checkmark.circle.fill" : "doc.on.doc.fill")
+                            .font(.system(size: 12, weight: .medium))
+                        Text(justCopied ? "Copied!" : "Copy")
+                            .font(.system(size: 13, weight: .medium))
+                    }
+                    .foregroundColor(justCopied ? .green : .blue)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(
+                        Capsule()
+                            .fill(justCopied ? Color.green.opacity(0.12) : Color.blue.opacity(0.12))
+                    )
+                }
+                .buttonStyle(.plain)
+                
+                Button(action: { dismiss() }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 20))
+                        .foregroundColor(.secondary.opacity(0.6))
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(16)
+            
+            Divider().opacity(0.3)
+            
+            // Content
+            if item.type == .text, let text = item.textData {
+                ScrollView {
+                    Text(text)
+                        .font(.system(size: 14, design: .monospaced))
+                        .foregroundColor(.primary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(16)
+                        .textSelection(.enabled)
+                }
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color(nsColor: .textBackgroundColor).opacity(0.2))
+                        .padding(8)
+                )
+            } else if item.type == .image, let img = item.imageData {
+                ScrollView {
+                    Image(nsImage: img)
+                        .resizable()
+                        .scaledToFit()
+                        .cornerRadius(8)
+                        .shadow(color: .black.opacity(0.15), radius: 8, y: 4)
+                        .padding(16)
+                }
+            }
+            
+            Divider().opacity(0.3)
+            
+            // Footer info
+            HStack {
+                Image(systemName: "clock")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                Text("Copied at \(item.dateCopied, style: .time) on \(item.dateCopied, style: .date)")
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+                Spacer()
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+        }
+        .frame(width: 520, height: 420)
+        .background(VisualEffectView(material: .hudWindow, blendingMode: .behindWindow))
+    }
+    
+    private func handleCopy() {
+        manager.writeToPasteboard(item: item)
+        withAnimation {
+            justCopied = true
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+            withAnimation {
+                justCopied = false
+            }
+        }
     }
 }
 
@@ -332,11 +425,6 @@ struct TextEditorSheet: View {
 }
 
 // MARK: - Supporting Views
-
-struct PreviewIdentifier: Identifiable {
-    let id = UUID()
-    let image: NSImage
-}
 
 struct GroupHeaderView: View {
     let date: Date
@@ -423,47 +511,45 @@ struct ClipboardItemView: View {
     
     var body: some View {
         HStack(spacing: 16) {
-            // Internal content
-            VStack(alignment: .leading, spacing: 4) {
-                if item.type == .text {
-                    Text(item.textData ?? "")
-                        .font(.system(size: 14, weight: .regular, design: .default))
-                        .lineLimit(3)
-                        .foregroundColor(.primary)
-                } else if item.type == .image, let img = item.imageData {
-                    Image(nsImage: img)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(maxHeight: 120)
-                        .cornerRadius(6)
-                        .clipped()
-                }
-                
-                Text(item.dateCopied, style: .time)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            
-            // Hover Actions
-            if isHovered || justCopied {
-                HStack(spacing: 12) {
-                    if item.type == .image {
-                        Button(action: onPreview) {
-                            Image(systemName: "eye.fill")
-                                .foregroundColor(.secondary)
-                                .font(.system(size: 18))
-                                .frame(width: 24, height: 24)
-                        }
-                        .buttonStyle(.plain)
+            // Clickable content area — click opens preview
+            Button(action: onPreview) {
+                VStack(alignment: .leading, spacing: 4) {
+                    if item.type == .text {
+                        Text(item.textData ?? "")
+                            .font(.system(size: 14, weight: .regular, design: .default))
+                            .lineLimit(3)
+                            .foregroundColor(.primary)
+                    } else if item.type == .image, let img = item.imageData {
+                        Image(nsImage: img)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(maxHeight: 120)
+                            .cornerRadius(6)
+                            .clipped()
                     }
                     
+                    Text(item.dateCopied, style: .time)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            
+            // Hover Actions (copy, edit, delete — no separate preview button)
+            if isHovered || justCopied {
+                HStack(spacing: 10) {
                     if item.type == .text {
                         Button(action: onEdit) {
                             Image(systemName: "pencil.line")
                                 .foregroundColor(.orange)
-                                .font(.system(size: 18))
-                                .frame(width: 24, height: 24)
+                                .font(.system(size: 16))
+                                .frame(width: 28, height: 28)
+                                .background(
+                                    Circle()
+                                        .fill(Color.orange.opacity(0.1))
+                                )
                         }
                         .buttonStyle(.plain)
                         .help("Edit text")
@@ -472,10 +558,15 @@ struct ClipboardItemView: View {
                     Button(action: handleCopy) {
                         Image(systemName: justCopied ? "checkmark" : "doc.on.doc.fill")
                             .foregroundColor(justCopied ? .green : .blue)
-                            .font(.system(size: 18))
-                            .frame(width: 24, height: 24)
+                            .font(.system(size: 16))
+                            .frame(width: 28, height: 28)
+                            .background(
+                                Circle()
+                                    .fill(justCopied ? Color.green.opacity(0.1) : Color.blue.opacity(0.1))
+                            )
                     }
                     .buttonStyle(.plain)
+                    .help("Copy to clipboard")
                     
                     Button(action: {
                         withAnimation {
@@ -484,12 +575,17 @@ struct ClipboardItemView: View {
                     }) {
                         Image(systemName: "trash.fill")
                             .foregroundColor(.red.opacity(0.8))
-                            .font(.system(size: 18))
-                            .frame(width: 24, height: 24)
+                            .font(.system(size: 16))
+                            .frame(width: 28, height: 28)
+                            .background(
+                                Circle()
+                                    .fill(Color.red.opacity(0.1))
+                            )
                     }
                     .buttonStyle(.plain)
+                    .help("Delete")
                 }
-                .transition(.opacity)
+                .transition(.opacity.combined(with: .scale(scale: 0.9)))
             }
         }
         .padding(16)
