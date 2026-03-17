@@ -1,19 +1,85 @@
 import SwiftUI
+import Combine
 import UniformTypeIdentifiers
+
+// MARK: - Menu Bar Filter Type
+
+enum MenuBarFilterType: String, CaseIterable {
+    case all = "All"
+    case text = "Text"
+    case image = "Image"
+    case code = "Code"
+    
+    var icon: String {
+        switch self {
+        case .all: return "square.stack.fill"
+        case .text: return "doc.plaintext.fill"
+        case .image: return "photo.fill"
+        case .code: return "chevron.left.forwardslash.chevron.right"
+        }
+    }
+    
+    var accentColor: Color {
+        switch self {
+        case .all: return .blue
+        case .text: return .cyan
+        case .image: return .purple
+        case .code: return .green
+        }
+    }
+}
+
+// MARK: - Window Pin Manager
+
+/// Manages the "Keep Open" state — delegates to MenuBarController for actual window behavior.
+class MenuBarPinManager: ObservableObject {
+    static let shared = MenuBarPinManager()
+    
+    @Published var keepOpen: Bool = false {
+        didSet {
+            MenuBarController.shared.onPinStateChanged(keepOpen: keepOpen)
+        }
+    }
+}
+
+// MARK: - Menu Bar View
 
 struct MenuBarView: View {
     @ObservedObject private var manager = ClipboardManager.shared
+    @ObservedObject private var pinManager = MenuBarPinManager.shared
     @State private var hoveredItemId: UUID?
     @State private var selectedItem: ClipboardItem?
+    @State private var activeFilter: MenuBarFilterType = .all
+    @State private var isDropTargeted = false
+    @State private var dropFlashCount = 0
+    @Namespace private var filterNamespace
     
     private var recentItems: [ClipboardItem] {
-        Array(manager.history.prefix(10))
+        switch activeFilter {
+        case .all:
+            return Array(manager.history.prefix(15))
+        case .text:
+            return Array(manager.history.filter { $0.type == .text && !$0.looksLikeCode }.prefix(15))
+        case .image:
+            return Array(manager.history.filter { $0.type == .image }.prefix(15))
+        case .code:
+            return Array(manager.history.filter { $0.looksLikeCode }.prefix(15))
+        }
+    }
+    
+    private func itemCountFor(_ filter: MenuBarFilterType) -> Int {
+        switch filter {
+        case .all: return min(manager.history.count, 15)
+        case .text: return min(manager.history.filter { $0.type == .text && !$0.looksLikeCode }.count, 15)
+        case .image: return min(manager.history.filter { $0.type == .image }.count, 15)
+        case .code: return min(manager.history.filter { $0.looksLikeCode }.count, 15)
+        }
     }
     
     var body: some View {
         VStack(spacing: 0) {
-            // Header (fixed, outside scroll)
-            HStack {
+            // ─── Header ───
+            HStack(spacing: 8) {
                 Image(systemName: "doc.on.clipboard.fill")
                     .foregroundStyle(
                         LinearGradient(
@@ -22,42 +88,59 @@ struct MenuBarView: View {
                             endPoint: .bottom
                         )
                     )
-                    .font(.system(size: 15, weight: .semibold))
-                Text("Clipboard History")
                     .font(.system(size: 14, weight: .semibold))
+                Text("Clipboard")
+                    .font(.system(size: 13, weight: .semibold))
+                
                 Spacer()
-                Text("\(manager.history.count) items")
-                    .font(.system(size: 11, weight: .medium))
+                
+                // Keep Open toggle
+                KeepOpenToggle(isOn: $pinManager.keepOpen)
+                
+                Text("\(manager.history.count)")
+                    .font(.system(size: 10, weight: .bold, design: .rounded))
                     .foregroundColor(.secondary)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2)
                     .background(
                         Capsule()
-                            .fill(Color(nsColor: .windowBackgroundColor).opacity(0.5))
+                            .fill(Color(nsColor: .windowBackgroundColor).opacity(0.6))
                     )
             }
             .padding(.horizontal, 14)
-            .padding(.vertical, 12)
+            .padding(.top, 10)
+            .padding(.bottom, 6)
             
-            Divider().opacity(0.2)
+            // ─── Navbar Filter ───
+            MenuBarNavbar(
+                activeFilter: $activeFilter,
+                namespace: filterNamespace,
+                itemCountFor: itemCountFor
+            )
+            .padding(.horizontal, 8)
+            .padding(.bottom, 6)
             
-            // Scrollable content area (list + preview inside a single scroll)
-            if recentItems.isEmpty {
-                VStack(spacing: 8) {
-                    Image(systemName: "doc.on.clipboard")
-                        .font(.system(size: 28))
-                        .foregroundColor(.secondary.opacity(0.5))
-                    Text("No items yet")
-                        .font(.system(size: 13))
-                        .foregroundColor(.secondary)
-                    Text("Copy something to see it here")
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary.opacity(0.7))
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            Divider().opacity(0.15)
+            
+            // ─── Drop Zone (always visible when dragging, or when Keep Open is on) ───
+            if isDropTargeted {
+                MenuBarDropZone(isTargeted: true)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+            
+            // ─── Content ───
+            if recentItems.isEmpty && !isDropTargeted {
+                emptyStateView
             } else {
                 ScrollView {
-                    LazyVStack(spacing: 3) {
+                    // Subtle drop hint at top when not actively dragging
+                    if !isDropTargeted {
+                        DropHintBanner()
+                            .padding(.horizontal, 6)
+                            .padding(.top, 4)
+                    }
+                    
+                    LazyVStack(spacing: 2) {
                         ForEach(recentItems) { item in
                             MenuBarItemRow(
                                 item: item,
@@ -88,7 +171,7 @@ struct MenuBarView: View {
                                 return NSItemProvider()
                             }
                             
-                            // Inline preview — directly below the selected row
+                            // Inline preview
                             if selectedItem?.id == item.id {
                                 MenuBarPreviewPanel(item: item) {
                                     withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
@@ -106,16 +189,16 @@ struct MenuBarView: View {
                 }
             }
             
-            Divider().opacity(0.2)
+            Divider().opacity(0.15)
             
-            // Footer (fixed, outside scroll)
+            // ─── Footer ───
             HStack {
                 Button(action: openMainWindow) {
-                    HStack(spacing: 6) {
+                    HStack(spacing: 5) {
                         Image(systemName: "macwindow")
-                            .font(.system(size: 12))
+                            .font(.system(size: 11))
                         Text("Open Clipboard")
-                            .font(.system(size: 12, weight: .medium))
+                            .font(.system(size: 11, weight: .medium))
                     }
                 }
                 .buttonStyle(.plain)
@@ -125,21 +208,313 @@ struct MenuBarView: View {
                 
                 Button(action: { NSApplication.shared.terminate(nil) }) {
                     Text("Quit")
-                        .font(.system(size: 12))
+                        .font(.system(size: 11))
                         .foregroundColor(.secondary)
                 }
                 .buttonStyle(.plain)
             }
             .padding(.horizontal, 14)
-            .padding(.vertical, 10)
+            .padding(.vertical, 8)
         }
-        .frame(width: 340, height: 460)
+        .frame(width: 340, height: 480)
+        .animation(.easeInOut(duration: 0.2), value: activeFilter)
+        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isDropTargeted)
+        // Global drop target for the entire menu bar view
+        .onDrop(of: [.plainText, .utf8PlainText, .image, .png, .tiff, .fileURL], isTargeted: $isDropTargeted) { providers in
+            handleDrop(providers: providers)
+        }
+    }
+    
+    // MARK: - Empty State
+    
+    @ViewBuilder
+    private var emptyStateView: some View {
+        VStack(spacing: 10) {
+            Image(systemName: activeFilter == .all ? "doc.on.clipboard" : activeFilter.icon)
+                .font(.system(size: 30))
+                .foregroundColor(.secondary.opacity(0.4))
+            Text(activeFilter == .all ? "No items yet" : "No \(activeFilter.rawValue.lowercased()) items")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(.secondary)
+            if activeFilter == .all {
+                Text("Drag items here or copy something")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary.opacity(0.6))
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+    
+    // MARK: - Drop Handling
+    
+    private func handleDrop(providers: [NSItemProvider]) -> Bool {
+        var handled = false
+        
+        for provider in providers {
+            // Try plain text
+            if provider.hasItemConformingToTypeIdentifier(UTType.plainText.identifier) {
+                provider.loadItem(forTypeIdentifier: UTType.plainText.identifier, options: nil) { data, _ in
+                    if let textData = data as? Data, let text = String(data: textData, encoding: .utf8) {
+                        let item = ClipboardItem(id: UUID(), type: .text, textData: text, imageData: nil, dateCopied: Date())
+                        DispatchQueue.main.async {
+                            manager.addItem(item)
+                            flashDropSuccess()
+                        }
+                    } else if let text = data as? String {
+                        let item = ClipboardItem(id: UUID(), type: .text, textData: text, imageData: nil, dateCopied: Date())
+                        DispatchQueue.main.async {
+                            manager.addItem(item)
+                            flashDropSuccess()
+                        }
+                    }
+                }
+                handled = true
+            }
+            // Try image types
+            else if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
+                provider.loadItem(forTypeIdentifier: UTType.image.identifier, options: nil) { data, _ in
+                    if let imageData = data as? Data, let image = NSImage(data: imageData) {
+                        let item = ClipboardItem(id: UUID(), type: .image, textData: nil, imageData: image, dateCopied: Date())
+                        DispatchQueue.main.async {
+                            manager.addItem(item)
+                            flashDropSuccess()
+                        }
+                    }
+                }
+                handled = true
+            }
+            // Try file URL (images or text files)
+            else if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+                provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { data, _ in
+                    if let urlData = data as? Data,
+                       let url = URL(dataRepresentation: urlData, relativeTo: nil) {
+                        // Try loading as image
+                        if let image = NSImage(contentsOf: url) {
+                            let item = ClipboardItem(id: UUID(), type: .image, textData: nil, imageData: image, dateCopied: Date())
+                            DispatchQueue.main.async {
+                                manager.addItem(item)
+                                flashDropSuccess()
+                            }
+                        }
+                        // Try loading as text file
+                        else if let text = try? String(contentsOf: url, encoding: .utf8) {
+                            let item = ClipboardItem(id: UUID(), type: .text, textData: text, imageData: nil, dateCopied: Date())
+                            DispatchQueue.main.async {
+                                manager.addItem(item)
+                                flashDropSuccess()
+                            }
+                        }
+                    }
+                }
+                handled = true
+            }
+        }
+        
+        return handled
+    }
+    
+    private func flashDropSuccess() {
+        dropFlashCount += 1
     }
     
     private func openMainWindow() {
         NSApplication.shared.activate(ignoringOtherApps: true)
         if let window = NSApplication.shared.windows.first(where: { $0.title != "" || $0.contentView?.subviews.isEmpty == false }) {
             window.makeKeyAndOrderFront(nil)
+        }
+    }
+}
+
+// MARK: - Keep Open Toggle
+
+private struct KeepOpenToggle: View {
+    @Binding var isOn: Bool
+    @State private var isHovered = false
+    
+    var body: some View {
+        Button(action: {
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                isOn.toggle()
+            }
+        }) {
+            HStack(spacing: 4) {
+                Image(systemName: isOn ? "pin.fill" : "pin")
+                    .font(.system(size: 10, weight: .semibold))
+                    .rotationEffect(.degrees(isOn ? 0 : 45))
+            }
+            .foregroundColor(isOn ? .orange : .secondary)
+            .frame(width: 26, height: 22)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(isOn ? Color.orange.opacity(0.15) : Color.white.opacity(isHovered ? 0.08 : 0.04))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .stroke(isOn ? Color.orange.opacity(0.3) : Color.clear, lineWidth: 0.5)
+            )
+        }
+        .buttonStyle(.plain)
+        .help(isOn ? "Unpin — allow auto-close" : "Pin — keep menu bar open")
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.12)) {
+                isHovered = hovering
+            }
+        }
+    }
+}
+
+// MARK: - Drop Zone (shown when dragging over)
+
+private struct MenuBarDropZone: View {
+    let isTargeted: Bool
+    
+    @State private var pulseScale: CGFloat = 1.0
+    
+    var body: some View {
+        VStack(spacing: 6) {
+            Image(systemName: "plus.circle.fill")
+                .font(.system(size: 22, weight: .medium))
+                .foregroundColor(.blue)
+                .scaleEffect(pulseScale)
+            Text("Drop here to add")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(.blue.opacity(0.8))
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: 60)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Color.blue.opacity(0.5), style: StrokeStyle(lineWidth: 1.5, dash: [6, 3]))
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color.blue.opacity(0.08))
+                )
+        )
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .onAppear {
+            withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) {
+                pulseScale = 1.12
+            }
+        }
+    }
+}
+
+// MARK: - Drop Hint Banner (subtle, always visible)
+
+private struct DropHintBanner: View {
+    @State private var isHovered = false
+    
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "arrow.down.doc.fill")
+                .font(.system(size: 9, weight: .medium))
+                .foregroundColor(.secondary.opacity(0.5))
+            Text("Drag text, images, or files here")
+                .font(.system(size: 10))
+                .foregroundColor(.secondary.opacity(0.5))
+            Spacer()
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(Color(nsColor: .windowBackgroundColor).opacity(isHovered ? 0.4 : 0.2))
+        )
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.15)) {
+                isHovered = hovering
+            }
+        }
+    }
+}
+
+// MARK: - Navbar Component
+
+private struct MenuBarNavbar: View {
+    @Binding var activeFilter: MenuBarFilterType
+    let namespace: Namespace.ID
+    let itemCountFor: (MenuBarFilterType) -> Int
+    
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(MenuBarFilterType.allCases, id: \.self) { filter in
+                MenuBarNavItem(
+                    filter: filter,
+                    isActive: activeFilter == filter,
+                    count: itemCountFor(filter),
+                    namespace: namespace
+                ) {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                        activeFilter = filter
+                    }
+                }
+            }
+        }
+        .padding(3)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color(nsColor: .windowBackgroundColor).opacity(0.35))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(Color.white.opacity(0.06), lineWidth: 0.5)
+        )
+    }
+}
+
+// MARK: - Nav Item
+
+private struct MenuBarNavItem: View {
+    let filter: MenuBarFilterType
+    let isActive: Bool
+    let count: Int
+    let namespace: Namespace.ID
+    let action: () -> Void
+    
+    @State private var isHovered = false
+    
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: filter.icon)
+                    .font(.system(size: 10, weight: .semibold))
+                Text(filter.rawValue)
+                    .font(.system(size: 11, weight: isActive ? .bold : .medium))
+            }
+            .foregroundColor(isActive ? .white : (isHovered ? .primary.opacity(0.8) : .secondary))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity)
+            .background(
+                ZStack {
+                    if isActive {
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .fill(
+                                LinearGradient(
+                                    colors: [
+                                        filter.accentColor.opacity(0.8),
+                                        filter.accentColor.opacity(0.55)
+                                    ],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                )
+                            )
+                            .shadow(color: filter.accentColor.opacity(0.3), radius: 4, y: 2)
+                            .matchedGeometryEffect(id: "navIndicator", in: namespace)
+                    } else if isHovered {
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .fill(Color.white.opacity(0.06))
+                    }
+                }
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.12)) {
+                isHovered = hovering
+            }
         }
     }
 }
@@ -155,6 +530,26 @@ struct MenuBarItemRow: View {
     
     @State private var justCopied = false
     
+    private var itemIcon: String {
+        if item.looksLikeCode {
+            return "chevron.left.forwardslash.chevron.right"
+        } else if item.type == .image {
+            return "photo.fill"
+        } else {
+            return "doc.plaintext.fill"
+        }
+    }
+    
+    private var itemColor: Color {
+        if item.looksLikeCode {
+            return .green
+        } else if item.type == .image {
+            return .purple
+        } else {
+            return .blue
+        }
+    }
+    
     var body: some View {
         HStack(spacing: 10) {
             // Clickable content area
@@ -163,24 +558,32 @@ struct MenuBarItemRow: View {
                     // Type icon with background
                     ZStack {
                         RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(item.type == .text
-                                  ? Color.blue.opacity(0.12)
-                                  : Color.purple.opacity(0.12))
+                            .fill(itemColor.opacity(0.12))
                             .frame(width: 28, height: 28)
                         
-                        Image(systemName: item.type == .text ? "doc.plaintext.fill" : "photo.fill")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(item.type == .text ? .blue : .purple)
+                        Image(systemName: itemIcon)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(itemColor)
                     }
                     
                     // Content preview
                     if item.type == .text {
-                        Text(item.textData ?? "")
-                            .font(.system(size: 13))
-                            .lineLimit(2)
-                            .truncationMode(.tail)
-                            .foregroundColor(.primary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                        VStack(alignment: .leading, spacing: 2) {
+                            if item.looksLikeCode {
+                                Text(item.textData ?? "")
+                                    .font(.system(size: 11.5, design: .monospaced))
+                                    .lineLimit(2)
+                                    .truncationMode(.tail)
+                                    .foregroundColor(.primary)
+                            } else {
+                                Text(item.textData ?? "")
+                                    .font(.system(size: 13))
+                                    .lineLimit(2)
+                                    .truncationMode(.tail)
+                                    .foregroundColor(.primary)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     } else if item.type == .image, let img = item.imageData {
                         Image(nsImage: img)
                             .resizable()
@@ -256,14 +659,26 @@ struct MenuBarPreviewPanel: View {
     @State private var justCopied = false
     @ObservedObject private var manager = ClipboardManager.shared
     
+    private var previewLabel: String {
+        if item.looksLikeCode { return "Code Preview" }
+        if item.type == .image { return "Image Preview" }
+        return "Text Preview"
+    }
+    
+    private var previewIcon: String {
+        if item.looksLikeCode { return "chevron.left.forwardslash.chevron.right" }
+        if item.type == .image { return "photo.fill" }
+        return "doc.plaintext.fill"
+    }
+    
     var body: some View {
         VStack(spacing: 0) {
             // Preview header
             HStack {
-                Image(systemName: item.type == .text ? "doc.plaintext.fill" : "photo.fill")
+                Image(systemName: previewIcon)
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(.secondary)
-                Text("Preview")
+                Text(previewLabel)
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(.secondary)
                 
@@ -301,7 +716,7 @@ struct MenuBarPreviewPanel: View {
             if item.type == .text, let text = item.textData {
                 ScrollView {
                     Text(text)
-                        .font(.system(size: 12, design: .monospaced))
+                        .font(.system(size: 12, design: item.looksLikeCode ? .monospaced : .default))
                         .foregroundColor(.primary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(10)
