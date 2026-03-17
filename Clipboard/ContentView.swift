@@ -17,6 +17,7 @@ enum FilterType: String, CaseIterable {
 
 struct ContentView: View {
     @ObservedObject private var manager = ClipboardManager.shared
+    @State private var selectedTab: NavigationTab = .history
     @State private var filter: FilterType = .all
     @State private var searchText: String = ""
     @State private var editingItem: ClipboardItem?
@@ -56,24 +57,57 @@ struct ContentView: View {
     
     var body: some View {
         VStack(spacing: 0) {
-            // Header & Filters
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Clipboard History")
-                    .font(.system(size: 20, weight: .bold, design: .default))
-                    .foregroundColor(.primary)
-                HStack(spacing: 8) {
-                    ForEach(FilterType.allCases, id: \.self) { type in
-                        FilterButton(type: type, isSelected: filter == type) {
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                                filter = type
-                            }
+            // Navigation Bar
+            NavigationBarView(selectedTab: $selectedTab)
+            
+            // Tab Content
+            Group {
+                switch selectedTab {
+                case .history:
+                    historyContent
+                case .favorites:
+                    FavoritesView()
+                case .search:
+                    GlobalSearchView()
+                case .settings:
+                    SettingsView()
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .transition(.opacity.animation(.easeInOut(duration: 0.15)))
+        }
+        .background(Color.clear)
+        .animation(.easeInOut(duration: 0.2), value: isDropTargeted)
+        .animation(.easeInOut(duration: 0.15), value: selectedTab)
+        .sheet(item: $previewingItem) { item in
+            ClipboardPreviewSheet(item: item)
+        }
+        .sheet(item: $editingItem) { item in
+            TextEditorSheet(item: item) { updatedText in
+                manager.updateItemText(item, newText: updatedText)
+            }
+        }
+    }
+    
+    // MARK: - History Tab Content
+    
+    @ViewBuilder
+    private var historyContent: some View {
+        VStack(spacing: 0) {
+            // Filter buttons
+            HStack(spacing: 8) {
+                ForEach(FilterType.allCases, id: \.self) { type in
+                    FilterButton(type: type, isSelected: filter == type) {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                            filter = type
                         }
                     }
                 }
+                Spacer()
             }
             .padding(.horizontal, 24)
-            .padding(.top, 24)
-            .padding(.bottom, 12)
+            .padding(.top, 12)
+            .padding(.bottom, 8)
             
             // Search Bar
             HStack(spacing: 10) {
@@ -145,7 +179,7 @@ struct ContentView: View {
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.top, 100)
+                    .padding(.top, 80)
                 } else {
                     LazyVStack(spacing: 16, pinnedViews: [.sectionHeaders]) {
                         ForEach(groupedHistory, id: \.0) { date, items in
@@ -177,16 +211,6 @@ struct ContentView: View {
             .scrollIndicators(.hidden)
             .onDrop(of: [.plainText, .image, .fileURL], isTargeted: $isDropTargeted) { providers in
                 handleDrop(providers: providers)
-            }
-        }
-        .background(Color.clear)
-        .animation(.easeInOut(duration: 0.2), value: isDropTargeted)
-        .sheet(item: $previewingItem) { item in
-            ClipboardPreviewSheet(item: item)
-        }
-        .sheet(item: $editingItem) { item in
-            TextEditorSheet(item: item) { updatedText in
-                manager.updateItemText(item, newText: updatedText)
             }
         }
     }

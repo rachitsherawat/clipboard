@@ -14,7 +14,7 @@ struct ClipboardApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
-                .frame(minWidth: 350, idealWidth: 380, minHeight: 400, idealHeight: 600)
+                .frame(minWidth: 420, idealWidth: 460, minHeight: 400, idealHeight: 600)
                 .background(VisualEffectView(material: .hudWindow, blendingMode: .behindWindow).ignoresSafeArea())
         }
         .windowStyle(.hiddenTitleBar)
