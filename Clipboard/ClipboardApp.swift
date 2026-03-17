@@ -9,6 +9,8 @@ import SwiftUI
 
 @main
 struct ClipboardApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    
     var body: some Scene {
         WindowGroup {
             ContentView()
@@ -17,11 +19,15 @@ struct ClipboardApp: App {
         }
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentSize)
-        
-        MenuBarExtra("Clipboard", systemImage: "doc.on.clipboard.fill") {
-            MenuBarView()
-        }
-        .menuBarExtraStyle(.window)
+    }
+}
+
+// App delegate to initialize the custom menu bar controller
+class AppDelegate: NSObject, NSApplicationDelegate {
+    private var menuBarController: MenuBarController!
+    
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        menuBarController = MenuBarController.shared
     }
 }
 
