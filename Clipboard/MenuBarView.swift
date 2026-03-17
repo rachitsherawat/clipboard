@@ -9,6 +9,7 @@ enum MenuBarFilterType: String, CaseIterable {
     case text = "Text"
     case image = "Image"
     case code = "Code"
+    case link = "Link"
     
     var icon: String {
         switch self {
@@ -16,6 +17,7 @@ enum MenuBarFilterType: String, CaseIterable {
         case .text: return "doc.plaintext.fill"
         case .image: return "photo.fill"
         case .code: return "chevron.left.forwardslash.chevron.right"
+        case .link: return "link"
         }
     }
     
@@ -25,6 +27,7 @@ enum MenuBarFilterType: String, CaseIterable {
         case .text: return .cyan
         case .image: return .purple
         case .code: return .green
+        case .link: return .orange
         }
     }
 }
@@ -59,20 +62,23 @@ struct MenuBarView: View {
         case .all:
             return Array(manager.history.prefix(15))
         case .text:
-            return Array(manager.history.filter { $0.type == .text && !$0.looksLikeCode }.prefix(15))
+            return Array(manager.history.filter { $0.type == .text && !$0.looksLikeCode && !$0.looksLikeLink }.prefix(15))
         case .image:
             return Array(manager.history.filter { $0.type == .image }.prefix(15))
         case .code:
             return Array(manager.history.filter { $0.looksLikeCode }.prefix(15))
+        case .link:
+            return Array(manager.history.filter { $0.looksLikeLink }.prefix(15))
         }
     }
     
     private func itemCountFor(_ filter: MenuBarFilterType) -> Int {
         switch filter {
         case .all: return min(manager.history.count, 15)
-        case .text: return min(manager.history.filter { $0.type == .text && !$0.looksLikeCode }.count, 15)
+        case .text: return min(manager.history.filter { $0.type == .text && !$0.looksLikeCode && !$0.looksLikeLink }.count, 15)
         case .image: return min(manager.history.filter { $0.type == .image }.count, 15)
         case .code: return min(manager.history.filter { $0.looksLikeCode }.count, 15)
+        case .link: return min(manager.history.filter { $0.looksLikeLink }.count, 15)
         }
     }
     
@@ -429,7 +435,7 @@ private struct DropHintBanner: View {
     }
 }
 
-// MARK: - Navbar Component
+// MARK: - Navbar Component (Horizontally Scrollable)
 
 private struct MenuBarNavbar: View {
     @Binding var activeFilter: MenuBarFilterType
@@ -437,21 +443,63 @@ private struct MenuBarNavbar: View {
     let itemCountFor: (MenuBarFilterType) -> Int
     
     var body: some View {
-        HStack(spacing: 2) {
-            ForEach(MenuBarFilterType.allCases, id: \.self) { filter in
-                MenuBarNavItem(
-                    filter: filter,
-                    isActive: activeFilter == filter,
-                    count: itemCountFor(filter),
-                    namespace: namespace
-                ) {
+        ZStack {
+            // Scrollable chip row
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 4) {
+                        ForEach(MenuBarFilterType.allCases, id: \.self) { filter in
+                            MenuBarNavItem(
+                                filter: filter,
+                                isActive: activeFilter == filter,
+                                count: itemCountFor(filter),
+                                namespace: namespace
+                            ) {
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                                    activeFilter = filter
+                                }
+                            }
+                            .id(filter)
+                        }
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 3)
+                }
+                .onChange(of: activeFilter) { newFilter in
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
-                        activeFilter = filter
+                        proxy.scrollTo(newFilter, anchor: .center)
                     }
                 }
             }
+            
+            // Edge fade overlays
+            HStack(spacing: 0) {
+                LinearGradient(
+                    stops: [
+                        .init(color: Color(nsColor: .windowBackgroundColor), location: 0),
+                        .init(color: Color(nsColor: .windowBackgroundColor).opacity(0), location: 1)
+                    ],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+                .frame(width: 12)
+                .allowsHitTesting(false)
+                
+                Spacer()
+                
+                LinearGradient(
+                    stops: [
+                        .init(color: Color(nsColor: .windowBackgroundColor).opacity(0), location: 0),
+                        .init(color: Color(nsColor: .windowBackgroundColor), location: 1)
+                    ],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+                .frame(width: 12)
+                .allowsHitTesting(false)
+            }
         }
-        .padding(3)
+        .frame(height: 32)
         .background(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(Color(nsColor: .windowBackgroundColor).opacity(0.35))
@@ -460,10 +508,11 @@ private struct MenuBarNavbar: View {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .stroke(Color.white.opacity(0.06), lineWidth: 0.5)
         )
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 }
 
-// MARK: - Nav Item
+// MARK: - Nav Item (Fixed single-line chip)
 
 private struct MenuBarNavItem: View {
     let filter: MenuBarFilterType
@@ -481,11 +530,12 @@ private struct MenuBarNavItem: View {
                     .font(.system(size: 10, weight: .semibold))
                 Text(filter.rawValue)
                     .font(.system(size: 11, weight: isActive ? .bold : .medium))
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
             }
             .foregroundColor(isActive ? .white : (isHovered ? .primary.opacity(0.8) : .secondary))
             .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .frame(maxWidth: .infinity)
+            .padding(.vertical, 5)
             .background(
                 ZStack {
                     if isActive {
@@ -531,22 +581,20 @@ struct MenuBarItemRow: View {
     @State private var justCopied = false
     
     private var itemIcon: String {
-        if item.looksLikeCode {
-            return "chevron.left.forwardslash.chevron.right"
-        } else if item.type == .image {
-            return "photo.fill"
-        } else {
-            return "doc.plaintext.fill"
+        switch item.smartCategory {
+        case .code: return "chevron.left.forwardslash.chevron.right"
+        case .link: return "link"
+        case .image: return "photo.fill"
+        case .text: return "doc.plaintext.fill"
         }
     }
     
     private var itemColor: Color {
-        if item.looksLikeCode {
-            return .green
-        } else if item.type == .image {
-            return .purple
-        } else {
-            return .blue
+        switch item.smartCategory {
+        case .code: return .green
+        case .link: return .orange
+        case .image: return .purple
+        case .text: return .blue
         }
     }
     
@@ -567,24 +615,7 @@ struct MenuBarItemRow: View {
                     }
                     
                     // Content preview
-                    if item.type == .text {
-                        VStack(alignment: .leading, spacing: 2) {
-                            if item.looksLikeCode {
-                                Text(item.textData ?? "")
-                                    .font(.system(size: 11.5, design: .monospaced))
-                                    .lineLimit(2)
-                                    .truncationMode(.tail)
-                                    .foregroundColor(.primary)
-                            } else {
-                                Text(item.textData ?? "")
-                                    .font(.system(size: 13))
-                                    .lineLimit(2)
-                                    .truncationMode(.tail)
-                                    .foregroundColor(.primary)
-                            }
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    } else if item.type == .image, let img = item.imageData {
+                    if item.type == .image, let img = item.imageData {
                         Image(nsImage: img)
                             .resizable()
                             .scaledToFill()
@@ -594,6 +625,35 @@ struct MenuBarItemRow: View {
                         Text("Image")
                             .font(.system(size: 13))
                             .foregroundColor(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    } else if item.looksLikeLink {
+                        VStack(alignment: .leading, spacing: 2) {
+                            if let domain = item.extractedDomain {
+                                Text(domain)
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundColor(.orange)
+                                    .lineLimit(1)
+                            }
+                            Text(item.textData ?? "")
+                                .font(.system(size: 11))
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .foregroundColor(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    } else if item.looksLikeCode {
+                        Text(item.textData ?? "")
+                            .font(.system(size: 11.5, design: .monospaced))
+                            .lineLimit(2)
+                            .truncationMode(.tail)
+                            .foregroundColor(.primary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        Text(item.textData ?? "")
+                            .font(.system(size: 13))
+                            .lineLimit(2)
+                            .truncationMode(.tail)
+                            .foregroundColor(.primary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
