@@ -1,4 +1,6 @@
-# 📋 Clipboard — macOS Clipboard Manager
+## 🚀 Download
+
+👉 [Download Latest Version](https://github.com/rachitsherawat/clipboard/releases/latest)# 📋 Clipboard — macOS Clipboard Manager
 
 A native macOS clipboard manager built with SwiftUI. Lives in your menu bar and keeps a searchable, filterable history of everything you copy.
 
