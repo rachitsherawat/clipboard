@@ -899,69 +899,53 @@ struct QuickNoteEditorView: View {
     
     @FocusState private var isFocused: Bool
     
-    private var isHeading: Bool {
-        text.trimmingCharacters(in: .whitespaces).hasPrefix("# ")
-    }
-    
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .top, spacing: 8) {
-                Text("✏️")
-                    .font(.system(size: 13))
-                    .padding(.top, isExpanded ? 6 : 0)
-                
-                ZStack(alignment: .topLeading) {
-                    if text.isEmpty {
-                        Text("Quick note here...")
-                            .foregroundColor(.secondary.opacity(0.6))
-                            .font(.system(size: 13))
-                            .padding(.top, isExpanded ? 8 : 2)
-                            .padding(.leading, isExpanded ? 4 : 4)
-                    }
-                    
-                    TextEditor(text: $text)
-                        .font(.system(size: isHeading ? 16 : 13, weight: isHeading ? .semibold : .regular))
-                        .focused($isFocused)
-                        .frame(height: isExpanded ? 120 : 20)
-                        .scrollContentBackground(.hidden)
-                        .background(Color.clear)
-                }
-                
-                if !text.isEmpty {
-                    Button(action: {
-                        withAnimation(.spring(response: 0.3)) {
-                            onSave()
-                            isExpanded = false
-                            isFocused = false
-                        }
-                    }) {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 16))
-                            .foregroundColor(.green)
-                    }
-                    .buttonStyle(.plain)
-                    .transition(.opacity.combined(with: .scale))
-                    .padding(.top, isExpanded ? 4 : 0)
-                }
-            }
+        VStack(spacing: 0) {
             
+            // ─── Editor Area ───
+            ZStack(alignment: .topLeading) {
+                if text.isEmpty {
+                    Text("✏️ Write a quick note...")
+                        .foregroundColor(.secondary.opacity(0.6))
+                        .font(.system(size: 13))
+                        .padding(.top, 10)
+                        .padding(.leading, 8)
+                }
+                
+                TextEditor(text: $text)
+                    .font(.system(size: 13, weight: .regular))
+                    .focused($isFocused)
+                    .scrollContentBackground(.hidden)
+                    .background(Color.clear)
+                    .padding(6)
+            }
+            .frame(minHeight: 40, maxHeight: isExpanded ? 240 : 40)
+            
+            // ─── Toolbar Area ───
             if isExpanded {
-                QuickNoteToolbarView(text: $text)
+                Divider().opacity(0.5)
+                
+                QuickNoteToolbarView(text: $text) {
+                    withAnimation(.spring(response: 0.3)) {
+                        onSave()
+                        isExpanded = false
+                        isFocused = false
+                    }
+                }
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 2)
         .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(isExpanded ? Color(nsColor: .windowBackgroundColor) : Color(nsColor: .controlBackgroundColor).opacity(0.8))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(isFocused ? Color.orange.opacity(isExpanded ? 0.8 : 0.5) : Color.white.opacity(0.06), lineWidth: 1)
         )
+        .clipped()
         .shadow(color: isExpanded ? Color.black.opacity(0.2) : .clear, radius: 10, y: 5)
         .animation(.spring(response: 0.3), value: isExpanded)
-        .animation(.easeInOut(duration: 0.2), value: isHeading)
         .animation(.easeInOut(duration: 0.2), value: isFocused)
         .onTapGesture {
             if !isExpanded {
@@ -987,28 +971,6 @@ struct QuickNoteEditorView: View {
                 return
             }
             
-            if newValue.count > oldValue.count, newValue.hasSuffix("\n") {
-                let lines = oldValue.components(separatedBy: .newlines)
-                if let lastLine = lines.last {
-                    let trimmed = lastLine.trimmingCharacters(in: .whitespaces)
-                    if trimmed.hasPrefix("- ") && trimmed.count > 2 {
-                        text += "- "
-                    } else if trimmed.hasPrefix("• ") && trimmed.count > 2 {
-                        text += "• "
-                    } else {
-                        if let regex = try? NSRegularExpression(pattern: "^(\\d+)\\.\\s"),
-                           let match = regex.firstMatch(in: trimmed, range: NSRange(trimmed.startIndex..., in: trimmed)) {
-                            if trimmed.count > match.range.length {
-                                let numStr = (trimmed as NSString).substring(with: match.range(at: 1))
-                                if let num = Int(numStr) {
-                                    text += "\(num + 1). "
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            
             if !newValue.isEmpty && !isExpanded {
                 withAnimation(.spring(response: 0.3)) {
                     isExpanded = true
@@ -1020,53 +982,34 @@ struct QuickNoteEditorView: View {
 
 struct QuickNoteToolbarView: View {
     @Binding var text: String
+    let onSaveAction: () -> Void
     
     var body: some View {
-        HStack(spacing: 24) {
-            Button(action: { applyMarkdown("**", "") }) {
-                Image(systemName: "bold")
-                    .font(.system(size: 16, weight: .medium))
-                    .padding(4)
-            }
-            Button(action: { applyMarkdown("*", "") }) {
-                Image(systemName: "italic")
-                    .font(.system(size: 16, weight: .medium))
-                    .padding(4)
-            }
-            Button(action: { applyMarkdown("# ", "") }) {
-                Text("H")
-                    .font(.system(size: 14, weight: .bold))
-                    .padding(4)
-            }
-            Button(action: { applyMarkdown("- ", "") }) {
-                Image(systemName: "list.bullet")
-                    .font(.system(size: 16, weight: .medium))
-                    .padding(4)
-            }
-            Button(action: { applyMarkdown("1. ", "") }) {
-                Image(systemName: "list.number")
-                    .font(.system(size: 16, weight: .medium))
-                    .padding(4)
-            }
+        HStack(spacing: 16) {
             Spacer()
+            
+            Button(action: onSaveAction) {
+                HStack(spacing: 6) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundColor(.green)
+                        .font(.system(size: 14))
+                    Text("Save")
+                        .font(.system(size: 13, weight: .semibold))
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(Color.green.opacity(0.1))
+                .cornerRadius(6)
+            }
+            .buttonStyle(.plain)
+            .opacity(text.isEmpty ? 0.4 : 1.0)
+            .disabled(text.isEmpty)
         }
+        .font(.system(size: 15, weight: .medium))
         .buttonStyle(.plain)
         .foregroundColor(.primary.opacity(0.8))
-        .padding(.horizontal, 4)
-        .padding(.top, 4)
-        .transition(.opacity.combined(with: .move(edge: .top)))
-    }
-    
-    private func applyMarkdown(_ prefix: String, _ suffix: String) {
-        if text.isEmpty {
-            text = prefix + suffix
-        } else {
-            if prefix == "# " || prefix == "- " || prefix == "1. " {
-                if !text.hasSuffix("\n") { text += "\n" }
-                text += prefix
-            } else {
-                text += prefix + suffix
-            }
-        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(Color(nsColor: .windowBackgroundColor).opacity(0.4))
     }
 }
