@@ -5,12 +5,16 @@ enum FilterType: String, CaseIterable {
     case all = "All"
     case text = "Text"
     case image = "Image"
+    case code = "Code"
+    case link = "Link"
     
     var icon: String {
         switch self {
         case .all: return "tray.full.fill"
         case .text: return "doc.plaintext.fill"
         case .image: return "photo.fill"
+        case .code: return "chevron.left.forwardslash.chevron.right"
+        case .link: return "link"
         }
     }
 }
@@ -30,8 +34,10 @@ struct ContentView: View {
         // Apply type filter
         switch filter {
         case .all: break
-        case .text: items = items.filter { $0.type == .text }
+        case .text: items = items.filter { $0.type == .text && !$0.looksLikeCode && !$0.looksLikeLink }
         case .image: items = items.filter { $0.type == .image }
+        case .code: items = items.filter { $0.looksLikeCode }
+        case .link: items = items.filter { $0.looksLikeLink }
         }
         
         // Apply search filter
