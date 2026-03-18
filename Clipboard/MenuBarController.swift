@@ -2,8 +2,19 @@ import SwiftUI
 import Combine
 import AppKit
 
+extension Notification.Name {
+    static let menuBarDidShow = Notification.Name("menuBarDidShow")
+    static let menuBarDidHide = Notification.Name("menuBarDidHide")
+}
+
 /// Custom controller that replaces MenuBarExtra with a manually managed
 /// NSStatusItem + NSPanel, giving us full control over dismiss behavior.
+
+class KeyPanel: NSPanel {
+    override var canBecomeKey: Bool { return true }
+    override var canBecomeMain: Bool { return true }
+}
+
 class MenuBarController: NSObject {
     static let shared = MenuBarController()
     
@@ -37,7 +48,7 @@ class MenuBarController: NSObject {
         let panelWidth: CGFloat = 340
         let panelHeight: CGFloat = 480
         
-        panel = NSPanel(
+        panel = KeyPanel(
             contentRect: NSRect(x: 0, y: 0, width: panelWidth, height: panelHeight),
             styleMask: [.nonactivatingPanel, .fullSizeContentView],
             backing: .buffered,
@@ -114,18 +125,21 @@ class MenuBarController: NSObject {
         
         isVisible = true
         installMonitorIfNeeded()
+        NotificationCenter.default.post(name: .menuBarDidShow, object: nil)
     }
     
     func hidePanel() {
         guard !MenuBarPinManager.shared.keepOpen else { return }
         panel.orderOut(nil)
         isVisible = false
+        NotificationCenter.default.post(name: .menuBarDidHide, object: nil)
         removeMonitors()
     }
     
     func forceHide() {
         panel.orderOut(nil)
         isVisible = false
+        NotificationCenter.default.post(name: .menuBarDidHide, object: nil)
         removeMonitors()
     }
     
