@@ -101,7 +101,7 @@ class ClipboardManager: ObservableObject {
     
     func writeToPasteboard(item: ClipboardItem) {
         pasteboard.clearContents()
-        if item.type == .text, let text = item.textData {
+        if let text = item.textData, item.smartCategory != .image {
             pasteboard.setString(text, forType: .string)
         } else if item.type == .image, let image = item.imageData {
             pasteboard.writeObjects([image])

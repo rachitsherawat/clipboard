@@ -10,6 +10,7 @@ enum MenuBarFilterType: String, CaseIterable {
     case image = "Image"
     case code = "Code"
     case link = "Link"
+    case note = "Note"
     
     var icon: String {
         switch self {
@@ -18,6 +19,7 @@ enum MenuBarFilterType: String, CaseIterable {
         case .image: return "photo.fill"
         case .code: return "chevron.left.forwardslash.chevron.right"
         case .link: return "link"
+        case .note: return "pencil.line"
         }
     }
     
@@ -28,6 +30,7 @@ enum MenuBarFilterType: String, CaseIterable {
         case .image: return .purple
         case .code: return .green
         case .link: return .orange
+        case .note: return .yellow
         }
     }
 }
@@ -55,6 +58,8 @@ struct MenuBarView: View {
     @State private var activeFilter: MenuBarFilterType = .all
     @State private var isDropTargeted = false
     @State private var dropFlashCount = 0
+    @State private var quickNoteText: String = ""
+    @State private var isNoteExpanded: Bool = false
     @Namespace private var filterNamespace
     
     private var recentItems: [ClipboardItem] {
@@ -62,23 +67,26 @@ struct MenuBarView: View {
         case .all:
             return Array(manager.history.prefix(15))
         case .text:
-            return Array(manager.history.filter { $0.type == .text && !$0.looksLikeCode && !$0.looksLikeLink }.prefix(15))
+            return Array(manager.history.filter { $0.smartCategory == .text }.prefix(15))
         case .image:
-            return Array(manager.history.filter { $0.type == .image }.prefix(15))
+            return Array(manager.history.filter { $0.smartCategory == .image }.prefix(15))
         case .code:
-            return Array(manager.history.filter { $0.looksLikeCode }.prefix(15))
+            return Array(manager.history.filter { $0.smartCategory == .code }.prefix(15))
         case .link:
-            return Array(manager.history.filter { $0.looksLikeLink }.prefix(15))
+            return Array(manager.history.filter { $0.smartCategory == .link }.prefix(15))
+        case .note:
+            return Array(manager.history.filter { $0.smartCategory == .note }.prefix(15))
         }
     }
     
     private func itemCountFor(_ filter: MenuBarFilterType) -> Int {
         switch filter {
         case .all: return min(manager.history.count, 15)
-        case .text: return min(manager.history.filter { $0.type == .text && !$0.looksLikeCode && !$0.looksLikeLink }.count, 15)
-        case .image: return min(manager.history.filter { $0.type == .image }.count, 15)
-        case .code: return min(manager.history.filter { $0.looksLikeCode }.count, 15)
-        case .link: return min(manager.history.filter { $0.looksLikeLink }.count, 15)
+        case .text: return min(manager.history.filter { $0.smartCategory == .text }.count, 15)
+        case .image: return min(manager.history.filter { $0.smartCategory == .image }.count, 15)
+        case .code: return min(manager.history.filter { $0.smartCategory == .code }.count, 15)
+        case .link: return min(manager.history.filter { $0.smartCategory == .link }.count, 15)
+        case .note: return min(manager.history.filter { $0.smartCategory == .note }.count, 15)
         }
     }
     
@@ -126,6 +134,15 @@ struct MenuBarView: View {
             .padding(.horizontal, 8)
             .padding(.bottom, 6)
             
+            // ─── Quick Note Editor ───
+            QuickNoteEditorView(
+                text: $quickNoteText,
+                isExpanded: $isNoteExpanded,
+                onSave: { saveNote() }
+            )
+            .padding(.horizontal, 8)
+            .padding(.bottom, 6)
+            
             Divider().opacity(0.15)
             
             // ─── Drop Zone (always visible when dragging, or when Keep Open is on) ───
@@ -135,19 +152,20 @@ struct MenuBarView: View {
             }
             
             // ─── Content ───
-            if recentItems.isEmpty && !isDropTargeted {
-                emptyStateView
-            } else {
-                ScrollView {
-                    // Subtle drop hint at top when not actively dragging
-                    if !isDropTargeted {
-                        DropHintBanner()
-                            .padding(.horizontal, 6)
-                            .padding(.top, 4)
-                    }
-                    
-                    LazyVStack(spacing: 2) {
-                        ForEach(recentItems) { item in
+            ZStack(alignment: .top) {
+                if recentItems.isEmpty && !isDropTargeted {
+                    emptyStateView
+                } else {
+                    ScrollView {
+                        // Subtle drop hint at top when not actively dragging
+                        if !isDropTargeted {
+                            DropHintBanner()
+                                .padding(.horizontal, 6)
+                                .padding(.top, 4)
+                        }
+                        
+                        LazyVStack(spacing: 2) {
+                            ForEach(recentItems) { item in
                             MenuBarItemRow(
                                 item: item,
                                 isHovered: hoveredItemId == item.id,
@@ -194,8 +212,23 @@ struct MenuBarView: View {
                     .padding(.horizontal, 6)
                 }
             }
+        }
+        .opacity(isNoteExpanded ? 0.3 : 1.0)
+        .animation(.spring(response: 0.3), value: isNoteExpanded)
+        .onTapGesture {
+            if isNoteExpanded {
+                withAnimation(.spring(response: 0.3)) {
+                    saveNote()
+                    isNoteExpanded = false
+                }
+            }
+        }
+        // Localized drop target for content area, avoiding Quick Note input overlap
+        .onDrop(of: [.plainText, .utf8PlainText, .image, .png, .tiff, .fileURL], isTargeted: $isDropTargeted) { providers in
+            handleDrop(providers: providers)
+        }
             
-            Divider().opacity(0.15)
+        Divider().opacity(0.15)
             
             // ─── Footer ───
             HStack {
@@ -225,9 +258,29 @@ struct MenuBarView: View {
         .frame(width: 340, height: 480)
         .animation(.easeInOut(duration: 0.2), value: activeFilter)
         .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isDropTargeted)
-        // Global drop target for the entire menu bar view
-        .onDrop(of: [.plainText, .utf8PlainText, .image, .png, .tiff, .fileURL], isTargeted: $isDropTargeted) { providers in
-            handleDrop(providers: providers)
+        .onReceive(NotificationCenter.default.publisher(for: .menuBarDidShow)) { _ in
+            // Focus is handled by internal editor state
+        }
+        // State is intentionally explicitly preserved on hide so the Quick Note doesn't delete or prematurely submit unless user taps 'Save'.
+    }
+    
+    private func saveNote() {
+        let trimmed = quickNoteText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        
+        let item = ClipboardItem(
+            id: UUID(),
+            type: .note,
+            textData: trimmed,
+            imageData: nil,
+            dateCopied: Date(),
+            isNote: true
+        )
+        
+        DispatchQueue.main.async {
+            manager.addItem(item)
+            quickNoteText = ""
+            isNoteExpanded = false
         }
     }
     
@@ -242,7 +295,11 @@ struct MenuBarView: View {
             Text(activeFilter == .all ? "No items yet" : "No \(activeFilter.rawValue.lowercased()) items")
                 .font(.system(size: 13, weight: .medium))
                 .foregroundColor(.secondary)
-            if activeFilter == .all {
+            if activeFilter == .note {
+                Text("No notes yet — start typing above")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary.opacity(0.6))
+            } else if activeFilter == .all {
                 Text("Drag items here or copy something")
                     .font(.system(size: 11))
                     .foregroundColor(.secondary.opacity(0.6))
@@ -277,17 +334,19 @@ struct MenuBarView: View {
                 handled = true
             }
             // Try image types
-            else if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
-                provider.loadItem(forTypeIdentifier: UTType.image.identifier, options: nil) { data, _ in
-                    if let imageData = data as? Data, let image = NSImage(data: imageData) {
-                        let item = ClipboardItem(id: UUID(), type: .image, textData: nil, imageData: image, dateCopied: Date())
-                        DispatchQueue.main.async {
-                            manager.addItem(item)
-                            flashDropSuccess()
+            else if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) || provider.hasItemConformingToTypeIdentifier("public.image") {
+                if provider.canLoadObject(ofClass: NSImage.self) {
+                    provider.loadObject(ofClass: NSImage.self) { image, _ in
+                        if let img = image as? NSImage {
+                            let item = ClipboardItem(id: UUID(), type: .image, textData: nil, imageData: img, dateCopied: Date())
+                            DispatchQueue.main.async {
+                                manager.addItem(item)
+                                flashDropSuccess()
+                            }
                         }
                     }
+                    handled = true
                 }
-                handled = true
             }
             // Try file URL (images or text files)
             else if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
@@ -465,7 +524,7 @@ private struct MenuBarNavbar: View {
                     .padding(.horizontal, 14)
                     .padding(.vertical, 3)
                 }
-                .onChange(of: activeFilter) { newFilter in
+                .onChange(of: activeFilter) { _, newFilter in
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
                         proxy.scrollTo(newFilter, anchor: .center)
                     }
@@ -586,6 +645,7 @@ struct MenuBarItemRow: View {
         case .link: return "link"
         case .image: return "photo.fill"
         case .text: return "doc.plaintext.fill"
+        case .note: return "pencil.line"
         }
     }
     
@@ -595,7 +655,24 @@ struct MenuBarItemRow: View {
         case .link: return .orange
         case .image: return .purple
         case .text: return .blue
+        case .note: return .yellow
         }
+    }
+    
+    private var rowBackgroundColor: Color {
+        let isNote = item.smartCategory == .note
+        if isSelected {
+            return isNote ? Color.yellow.opacity(0.2) : Color.blue.opacity(0.18)
+        } else if isHovered {
+            return isNote ? Color.yellow.opacity(0.12) : Color(nsColor: .windowBackgroundColor).opacity(0.6)
+        } else {
+            return isNote ? Color.yellow.opacity(0.06) : Color.clear
+        }
+    }
+    
+    private var rowStrokeColor: Color {
+        guard isSelected else { return Color.clear }
+        return item.smartCategory == .note ? Color.yellow.opacity(0.4) : Color.blue.opacity(0.3)
     }
     
     var body: some View {
@@ -649,7 +726,7 @@ struct MenuBarItemRow: View {
                             .foregroundColor(.primary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     } else {
-                        Text(item.textData ?? "")
+                        Text(.init(item.textData ?? ""))
                             .font(.system(size: 13))
                             .lineLimit(2)
                             .truncationMode(.tail)
@@ -683,15 +760,11 @@ struct MenuBarItemRow: View {
         .padding(.vertical, 8)
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(
-                    isSelected
-                    ? Color.blue.opacity(0.18)
-                    : (isHovered ? Color(nsColor: .windowBackgroundColor).opacity(0.6) : Color.clear)
-                )
+                .fill(rowBackgroundColor)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(isSelected ? Color.blue.opacity(0.3) : Color.clear, lineWidth: 1)
+                .stroke(rowStrokeColor, lineWidth: 1)
         )
         .animation(.easeInOut(duration: 0.15), value: isHovered)
         .animation(.easeInOut(duration: 0.15), value: isSelected)
@@ -773,7 +846,7 @@ struct MenuBarPreviewPanel: View {
             .padding(.vertical, 8)
             
             // Preview content
-            if item.type == .text, let text = item.textData {
+            if let text = item.textData, item.smartCategory != .image {
                 ScrollView {
                     Text(text)
                         .font(.system(size: 12, design: item.looksLikeCode ? .monospaced : .default))
@@ -812,6 +885,187 @@ struct MenuBarPreviewPanel: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
             withAnimation {
                 justCopied = false
+            }
+        }
+    }
+}
+
+// MARK: - Modular Quick Note Views
+
+struct QuickNoteEditorView: View {
+    @Binding var text: String
+    @Binding var isExpanded: Bool
+    let onSave: () -> Void
+    
+    @FocusState private var isFocused: Bool
+    
+    private var isHeading: Bool {
+        text.trimmingCharacters(in: .whitespaces).hasPrefix("# ")
+    }
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 8) {
+                Text("✏️")
+                    .font(.system(size: 13))
+                    .padding(.top, isExpanded ? 6 : 0)
+                
+                ZStack(alignment: .topLeading) {
+                    if text.isEmpty {
+                        Text("Quick note here...")
+                            .foregroundColor(.secondary.opacity(0.6))
+                            .font(.system(size: 13))
+                            .padding(.top, isExpanded ? 8 : 2)
+                            .padding(.leading, isExpanded ? 4 : 4)
+                    }
+                    
+                    TextEditor(text: $text)
+                        .font(.system(size: isHeading ? 16 : 13, weight: isHeading ? .semibold : .regular))
+                        .focused($isFocused)
+                        .frame(height: isExpanded ? 120 : 20)
+                        .scrollContentBackground(.hidden)
+                        .background(Color.clear)
+                }
+                
+                if !text.isEmpty {
+                    Button(action: {
+                        withAnimation(.spring(response: 0.3)) {
+                            onSave()
+                            isExpanded = false
+                            isFocused = false
+                        }
+                    }) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 16))
+                            .foregroundColor(.green)
+                    }
+                    .buttonStyle(.plain)
+                    .transition(.opacity.combined(with: .scale))
+                    .padding(.top, isExpanded ? 4 : 0)
+                }
+            }
+            
+            if isExpanded {
+                QuickNoteToolbarView(text: $text)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(isExpanded ? Color(nsColor: .windowBackgroundColor) : Color(nsColor: .controlBackgroundColor).opacity(0.8))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(isFocused ? Color.orange.opacity(isExpanded ? 0.8 : 0.5) : Color.white.opacity(0.06), lineWidth: 1)
+        )
+        .shadow(color: isExpanded ? Color.black.opacity(0.2) : .clear, radius: 10, y: 5)
+        .animation(.spring(response: 0.3), value: isExpanded)
+        .animation(.easeInOut(duration: 0.2), value: isHeading)
+        .animation(.easeInOut(duration: 0.2), value: isFocused)
+        .onTapGesture {
+            if !isExpanded {
+                withAnimation(.spring(response: 0.3)) {
+                    isExpanded = true
+                    isFocused = true
+                }
+            }
+        }
+        .onChange(of: isExpanded) { _, expanded in
+            if expanded {
+                isFocused = true
+            }
+        }
+        .onChange(of: text) { oldValue, newValue in
+            if !isExpanded && newValue.hasSuffix("\n") {
+                text = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                withAnimation(.spring(response: 0.3)) {
+                    onSave()
+                    isExpanded = false
+                    isFocused = false
+                }
+                return
+            }
+            
+            if newValue.count > oldValue.count, newValue.hasSuffix("\n") {
+                let lines = oldValue.components(separatedBy: .newlines)
+                if let lastLine = lines.last {
+                    let trimmed = lastLine.trimmingCharacters(in: .whitespaces)
+                    if trimmed.hasPrefix("- ") && trimmed.count > 2 {
+                        text += "- "
+                    } else if trimmed.hasPrefix("• ") && trimmed.count > 2 {
+                        text += "• "
+                    } else {
+                        if let regex = try? NSRegularExpression(pattern: "^(\\d+)\\.\\s"),
+                           let match = regex.firstMatch(in: trimmed, range: NSRange(trimmed.startIndex..., in: trimmed)) {
+                            if trimmed.count > match.range.length {
+                                let numStr = (trimmed as NSString).substring(with: match.range(at: 1))
+                                if let num = Int(numStr) {
+                                    text += "\(num + 1). "
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            if !newValue.isEmpty && !isExpanded {
+                withAnimation(.spring(response: 0.3)) {
+                    isExpanded = true
+                }
+            }
+        }
+    }
+}
+
+struct QuickNoteToolbarView: View {
+    @Binding var text: String
+    
+    var body: some View {
+        HStack(spacing: 24) {
+            Button(action: { applyMarkdown("**", "") }) {
+                Image(systemName: "bold")
+                    .font(.system(size: 16, weight: .medium))
+                    .padding(4)
+            }
+            Button(action: { applyMarkdown("*", "") }) {
+                Image(systemName: "italic")
+                    .font(.system(size: 16, weight: .medium))
+                    .padding(4)
+            }
+            Button(action: { applyMarkdown("# ", "") }) {
+                Text("H")
+                    .font(.system(size: 14, weight: .bold))
+                    .padding(4)
+            }
+            Button(action: { applyMarkdown("- ", "") }) {
+                Image(systemName: "list.bullet")
+                    .font(.system(size: 16, weight: .medium))
+                    .padding(4)
+            }
+            Button(action: { applyMarkdown("1. ", "") }) {
+                Image(systemName: "list.number")
+                    .font(.system(size: 16, weight: .medium))
+                    .padding(4)
+            }
+            Spacer()
+        }
+        .buttonStyle(.plain)
+        .foregroundColor(.primary.opacity(0.8))
+        .padding(.horizontal, 4)
+        .padding(.top, 4)
+        .transition(.opacity.combined(with: .move(edge: .top)))
+    }
+    
+    private func applyMarkdown(_ prefix: String, _ suffix: String) {
+        if text.isEmpty {
+            text = prefix + suffix
+        } else {
+            if prefix == "# " || prefix == "- " || prefix == "1. " {
+                if !text.hasSuffix("\n") { text += "\n" }
+                text += prefix
+            } else {
+                text += prefix + suffix
             }
         }
     }

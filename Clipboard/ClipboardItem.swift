@@ -4,6 +4,18 @@ import AppKit
 enum ItemType: String, Codable {
     case text
     case image
+    case link
+    case code
+    case note
+    
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if let value = try? container.decode(String.self) {
+            self = ItemType(rawValue: value) ?? .text
+        } else {
+            self = .text
+        }
+    }
 }
 
 struct ClipboardItem: Identifiable, Equatable, Codable {
@@ -12,6 +24,8 @@ struct ClipboardItem: Identifiable, Equatable, Codable {
     let textData: String?
     let imageRawData: Data?
     let dateCopied: Date
+    let isNote: Bool?
+    
     
     var imageData: NSImage? {
         if let raw = imageRawData {
@@ -20,12 +34,13 @@ struct ClipboardItem: Identifiable, Equatable, Codable {
         return nil
     }
     
-    init(id: UUID, type: ItemType, textData: String?, imageData: NSImage?, dateCopied: Date) {
+    init(id: UUID, type: ItemType, textData: String?, imageData: NSImage?, dateCopied: Date, isNote: Bool? = nil) {
         self.id = id
         self.type = type
         self.textData = textData
         self.imageRawData = imageData?.tiffRepresentation
         self.dateCopied = dateCopied
+        self.isNote = isNote
     }
     
     /// Heuristic: does this text item look like a code snippet?
@@ -88,20 +103,22 @@ struct ClipboardItem: Identifiable, Equatable, Codable {
         case code = "Code"
         case link = "Link"
         case image = "Image"
+        case note = "Note"
     }
     
     var smartCategory: SmartCategory {
+        if type == .note || isNote == true { return .note }
         if type == .image { return .image }
-        if looksLikeCode { return .code }
-        if looksLikeLink { return .link }
+        if type == .code || looksLikeCode { return .code }
+        if type == .link || looksLikeLink { return .link }
         return .text
     }
     
     // For Equatable so we don't accidentally append duplicate items
     static func == (lhs: ClipboardItem, rhs: ClipboardItem) -> Bool {
         if lhs.type != rhs.type { return false }
-        if lhs.type == .text {
-            return lhs.textData == rhs.textData
+        if lhs.type == .text || lhs.type == .note || lhs.type == .code || lhs.type == .link {
+            return lhs.textData == rhs.textData && lhs.isNote == rhs.isNote
         } else {
             return lhs.imageRawData == rhs.imageRawData
         }
