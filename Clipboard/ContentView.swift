@@ -24,9 +24,7 @@ struct ContentView: View {
     @State private var selectedTab: NavigationTab = .history
     @State private var filter: FilterType = .all
     @State private var searchText: String = ""
-    @State private var editingItem: ClipboardItem?
     @State private var isDropTargeted = false
-    @State private var previewingItem: ClipboardItem?
     
     var filteredHistory: [ClipboardItem] {
         var items = manager.history
@@ -85,14 +83,6 @@ struct ContentView: View {
         .background(Color.clear)
         .animation(.easeInOut(duration: 0.2), value: isDropTargeted)
         .animation(.easeInOut(duration: 0.15), value: selectedTab)
-        .sheet(item: $previewingItem) { item in
-            ClipboardPreviewSheet(item: item)
-        }
-        .sheet(item: $editingItem) { item in
-            TextEditorSheet(item: item) { updatedText in
-                manager.updateItemText(item, newText: updatedText)
-            }
-        }
     }
     
     // MARK: - History Tab Content
@@ -195,8 +185,8 @@ struct ContentView: View {
                                         item: item,
                                         onCopy: { manager.writeToPasteboard(item: item) },
                                         onDelete: { manager.deleteItem(item) },
-                                        onPreview: { previewingItem = item },
-                                        onEdit: { editingItem = item }
+                                        onPreview: { manager.showDetail(for: item) },
+                                        onEdit: { manager.showDetail(for: item) }
                                     )
                                     .onDrag {
                                         if item.type == .text, let text = item.textData {
@@ -273,184 +263,6 @@ struct ContentView: View {
         }
         
         return handled
-    }
-}
-
-// MARK: - Unified Preview Sheet
-
-struct ClipboardPreviewSheet: View {
-    let item: ClipboardItem
-    @Environment(\.dismiss) private var dismiss
-    @State private var justCopied = false
-    @ObservedObject private var manager = ClipboardManager.shared
-    
-    var body: some View {
-        VStack(spacing: 0) {
-            // Header
-            HStack {
-                HStack(spacing: 8) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(item.type == .text ? Color.blue.opacity(0.15) : Color.purple.opacity(0.15))
-                            .frame(width: 28, height: 28)
-                        Image(systemName: item.type == .text ? "doc.plaintext.fill" : "photo.fill")
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundColor(item.type == .text ? .blue : .purple)
-                    }
-                    Text(item.type == .text ? "Text Preview" : "Image Preview")
-                        .font(.system(size: 16, weight: .semibold))
-                }
-                
-                Spacer()
-                
-                // Copy button
-                Button(action: handleCopy) {
-                    HStack(spacing: 5) {
-                        Image(systemName: justCopied ? "checkmark.circle.fill" : "doc.on.doc.fill")
-                            .font(.system(size: 12, weight: .medium))
-                        Text(justCopied ? "Copied!" : "Copy")
-                            .font(.system(size: 13, weight: .medium))
-                    }
-                    .foregroundColor(justCopied ? .green : .blue)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(
-                        Capsule()
-                            .fill(justCopied ? Color.green.opacity(0.12) : Color.blue.opacity(0.12))
-                    )
-                }
-                .buttonStyle(.plain)
-                
-                Button(action: { dismiss() }) {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 20))
-                        .foregroundColor(.secondary.opacity(0.6))
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(16)
-            
-            Divider().opacity(0.3)
-            
-            // Content
-            if item.type == .text, let text = item.textData {
-                ScrollView {
-                    Text(text)
-                        .font(.system(size: 14, design: .monospaced))
-                        .foregroundColor(.primary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(16)
-                        .textSelection(.enabled)
-                }
-                .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(Color(nsColor: .textBackgroundColor).opacity(0.2))
-                        .padding(8)
-                )
-            } else if item.type == .image, let img = item.imageData {
-                ScrollView {
-                    Image(nsImage: img)
-                        .resizable()
-                        .scaledToFit()
-                        .cornerRadius(8)
-                        .shadow(color: .black.opacity(0.15), radius: 8, y: 4)
-                        .padding(16)
-                }
-            }
-            
-            Divider().opacity(0.3)
-            
-            // Footer info
-            HStack {
-                Image(systemName: "clock")
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-                Text("Copied at \(item.dateCopied, style: .time) on \(item.dateCopied, style: .date)")
-                    .font(.system(size: 12))
-                    .foregroundColor(.secondary)
-                Spacer()
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-        }
-        .frame(width: 520, height: 420)
-        .background(VisualEffectView(material: .hudWindow, blendingMode: .behindWindow))
-    }
-    
-    private func handleCopy() {
-        manager.writeToPasteboard(item: item)
-        withAnimation {
-            justCopied = true
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-            withAnimation {
-                justCopied = false
-            }
-        }
-    }
-}
-
-// MARK: - Text Editor Sheet
-
-struct TextEditorSheet: View {
-    let item: ClipboardItem
-    let onSave: (String) -> Void
-    
-    @State private var editedText: String = ""
-    @Environment(\.dismiss) private var dismiss
-    
-    var body: some View {
-        VStack(spacing: 0) {
-            // Header
-            HStack {
-                Text("Edit Clipboard Text")
-                    .font(.system(size: 16, weight: .semibold))
-                Spacer()
-                Button(action: { dismiss() }) {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.title2)
-                        .foregroundColor(.secondary)
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(16)
-            
-            Divider().opacity(0.3)
-            
-            // Text Editor
-            TextEditor(text: $editedText)
-                .font(.system(size: 14, design: .monospaced))
-                .scrollContentBackground(.hidden)
-                .padding(12)
-                .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(Color(nsColor: .textBackgroundColor).opacity(0.3))
-                )
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-            
-            Divider().opacity(0.3)
-            
-            // Footer buttons
-            HStack {
-                Button("Cancel") { dismiss() }
-                    .keyboardShortcut(.cancelAction)
-                Spacer()
-                Button("Save") {
-                    onSave(editedText)
-                    dismiss()
-                }
-                .keyboardShortcut(.defaultAction)
-                .buttonStyle(.borderedProminent)
-                .disabled(editedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
-            .padding(16)
-        }
-        .frame(width: 480, height: 360)
-        .background(VisualEffectView(material: .hudWindow, blendingMode: .behindWindow))
-        .onAppear {
-            editedText = item.textData ?? ""
-        }
     }
 }
 

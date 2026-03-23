@@ -81,8 +81,10 @@ class ClipboardManager: ObservableObject {
             
             self.history.insert(item, at: 0)
             
-            // Keep history lean (e.g. 50 items max)
-            if self.history.count > 50 {
+            // Keep history lean (e.g. 50, 100 items max depending on settings)
+            let limit = UserDefaults.standard.integer(forKey: "historyLimit")
+            let maxItems = limit == 0 ? 100 : limit
+            if self.history.count > maxItems {
                 self.history.removeLast()
             }
             
@@ -113,10 +115,45 @@ class ClipboardManager: ObservableObject {
     func updateItemText(_ item: ClipboardItem, newText: String) {
         DispatchQueue.main.async {
             if let index = self.history.firstIndex(where: { $0.id == item.id }) {
-                let updated = ClipboardItem(id: item.id, type: .text, textData: newText, imageData: nil, dateCopied: item.dateCopied)
+                let updated = ClipboardItem(id: item.id, type: item.type, textData: newText, imageData: item.imageData, dateCopied: item.dateCopied, isNote: item.isNote, isPinned: item.isPinned)
                 self.history[index] = updated
                 self.saveHistory()
             }
+        }
+    }
+    
+    func togglePin(for item: ClipboardItem) {
+        DispatchQueue.main.async {
+            if let index = self.history.firstIndex(where: { $0.id == item.id }) {
+                let currentAttached = item.isPinned ?? false
+                let updated = ClipboardItem(id: item.id, type: item.type, textData: item.textData, imageData: item.imageData, dateCopied: item.dateCopied, isNote: item.isNote, isPinned: !currentAttached)
+                self.history[index] = updated
+                self.saveHistory()
+            }
+        }
+    }
+    
+    func updateItemType(for item: ClipboardItem, to newType: ItemType) {
+        DispatchQueue.main.async {
+            if let index = self.history.firstIndex(where: { $0.id == item.id }) {
+                let updated = ClipboardItem(id: item.id, type: newType, textData: item.textData, imageData: item.imageData, dateCopied: item.dateCopied, isNote: newType == .note ? true : item.isNote, isPinned: item.isPinned)
+                self.history[index] = updated
+                self.saveHistory()
+            }
+        }
+    }
+    
+    private var detailWindowController: DetailWindowController?
+
+    func showDetail(for item: ClipboardItem) {
+        DispatchQueue.main.async {
+            // Close old window if needed or reuse
+            if self.detailWindowController != nil {
+                self.detailWindowController?.close()
+            }
+            
+            self.detailWindowController = DetailWindowController(item: item)
+            self.detailWindowController?.show()
         }
     }
     
